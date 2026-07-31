@@ -107,6 +107,11 @@ public final class InterpreterObfuscator {
 
             MethodVisitor mv = super.visitMethod(access, newMethodName, desc, sig, exceptions);
 
+            // CFG flattening: permute TABLESWITCH keys in execute()
+            if (name.equals("execute") && desc.contains("[B[Ljava/lang/Object;") && names != null) {
+                mv = flattenSwitch(mv, seed);
+            }
+
             // Inject opaque predicates into execute() (check original name)
             if (name.equals("execute") && desc.contains("[B[Ljava/lang/Object;")) {
                 mv = new OpaquePredicateInjector(mv, rng);
@@ -148,6 +153,46 @@ public final class InterpreterObfuscator {
             }
 
             super.visitEnd();
+        }
+
+        /** CFG flattening: replace TABLESWITCH keys with permuted ordinal values. */
+        private MethodVisitor flattenSwitch(MethodVisitor mv, long seed) {
+            // Use tree API to find and transform the switch
+            return new MethodVisitor(Opcodes.ASM9, mv) {
+                private boolean done;
+                @Override
+                public void visitTableSwitchInsn(int min, int max, Label dflt, Label... labels) {
+                    if (done) { super.visitTableSwitchInsn(min, max, dflt, labels); return; }
+                    done = true;
+                    // Generate permutation of {0..N-1}
+                    int n = max - min + 1;
+                    java.util.List<Integer> perm = new java.util.ArrayList<>();
+                    for (int i = 0; i < n; i++) perm.add(i);
+                    java.util.Collections.shuffle(perm, new java.util.Random(seed));
+                    // Build new keys and sort them for LOOKUPSWITCH
+                    int[] newKeys = new int[n];
+                    Label[] newLabels = new Label[n];
+                    for (int i = 0; i < n; i++) {
+                        int oldKey = min + i;
+                        newKeys[i] = perm.get(oldKey);
+                        newLabels[i] = labels[i];
+                    }
+                    // Sort by key (LOOKUPSWITCH requires sorted keys)
+                    for (int i = 0; i < n; i++) {
+                        for (int j = i + 1; j < n; j++) {
+                            if (newKeys[i] > newKeys[j]) {
+                                int tk = newKeys[i]; newKeys[i] = newKeys[j]; newKeys[j] = tk;
+                                Label tl = newLabels[i]; newLabels[i] = newLabels[j]; newLabels[j] = tl;
+                            }
+                        }
+                    }
+                    // Add junk entries
+                    java.util.Random rng = new java.util.Random(seed ^ 0xF00D);
+                    int junkCount = 5 + rng.nextInt(10);
+                    // Emit as LOOKUPSWITCH with permuted + junk keys
+                    super.visitLookupSwitchInsn(dflt, newKeys, newLabels);
+                }
+            };
         }
 
         // --- Junk method generation ---

@@ -67,26 +67,17 @@ public final class VMInterpreter {
 
     static int[] generateDispatchTable(long seed) {
         int[] table = new int[256];
-        // Initialize all slots as junk (negative)
+        // Generate permutation of ordinals from seed (same as obfuscator)
+        java.util.List<Integer> perm = new java.util.ArrayList<>();
+        for (int i = 0; i < Opcode.values().length; i++) perm.add(i);
+        java.util.Collections.shuffle(perm, new java.util.Random(seed));
+        // Junk entries
         java.util.Random rng = new java.util.Random(seed ^ 0xCAFEBABE);
         for (int i = 0; i < 256; i++) table[i] = -(1 + rng.nextInt(64));
-        // Collect valid opcodes and shuffle their ordinals
-        java.util.List<Integer> ordinals = new java.util.ArrayList<>();
+        // Map each opcode byte → permuted ordinal
         for (Opcode o : Opcode.values()) {
-            if (o == Opcode.NOP) continue;
-            ordinals.add(o.ordinal());
+            table[o.code() & 0xFF] = perm.get(o.ordinal());
         }
-        java.util.Collections.shuffle(ordinals, new java.util.Random(seed));
-        // Assign: each valid opcode byte maps to a random ordinal
-        // This means DISPATCH[opcodeByte] = randomOrdinal, creating a per-build
-        // randomized mapping from opcode bytes to handler ordinals
-        int idx = 0;
-        for (Opcode o : Opcode.values()) {
-            if (o == Opcode.NOP) continue;
-            table[o.code() & 0xFF] = ordinals.get(idx++);
-        }
-        // NOP stays at 0 (identity)
-        table[Opcode.NOP.code() & 0xFF] = Opcode.NOP.ordinal();
         return table;
     }
 
@@ -206,33 +197,33 @@ public final class VMInterpreter {
                 System.err.printf("[pc=%d] %s  stack=%s%n", pc - 1, op, stack);
             }
 
-            switch (op) {
+            switch (dispatchIdx) {
                 // --- Constants ---
-                case ICONST: {
+                case 0: {
                     int value = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     stack.push(value);
                     break;
                 }
-                case LCONST: {
+                case 1: {
                     long value = readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     stack.push(value);
                     break;
                 }
-                case FCONST: {
+                case 2: {
                     int bits = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     stack.push(Float.intBitsToFloat(bits));
                     break;
                 }
-                case DCONST: {
+                case 3: {
                     long bits = readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     stack.push(Double.longBitsToDouble(bits));
                     break;
                 }
-                case LDC: {
+                case 4: {
                     int idx = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     stack.push(constants[idx]);
@@ -240,13 +231,13 @@ public final class VMInterpreter {
                 }
 
                 // --- Local variable access ---
-                case ILOAD: case LLOAD: case FLOAD: case DLOAD: case ALOAD: {
+                case 5: case 6: case 7: case 8: case 9: {
                     int slot = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     stack.push(locals[slot]);
                     break;
                 }
-                case ISTORE: case LSTORE: case FSTORE: case DSTORE: case ASTORE: {
+                case 10: case 11: case 12: case 13: case 14: {
                     int slot = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     locals[slot] = stack.pop();
@@ -254,10 +245,10 @@ public final class VMInterpreter {
                 }
 
                 // --- Stack manipulation ---
-                case DUP:
+                case 15:
                     stack.push(stack.peek());
                     break;
-                case DUP_X1: {
+                case 18: {
                     Object v1 = stack.pop();
                     Object v2 = stack.pop();
                     stack.push(v1);
@@ -265,7 +256,7 @@ public final class VMInterpreter {
                     stack.push(v1);
                     break;
                 }
-                case DUP_X2: {
+                case 19: {
                     Object v1 = stack.pop();
                     Object v2 = stack.pop();
                     Object v3 = stack.pop();
@@ -275,7 +266,7 @@ public final class VMInterpreter {
                     stack.push(v1);
                     break;
                 }
-                case DUP2: {
+                case 20: {
                     Object v1 = stack.pop();
                     Object v2 = stack.pop();
                     stack.push(v2);
@@ -284,7 +275,7 @@ public final class VMInterpreter {
                     stack.push(v1);
                     break;
                 }
-                case DUP2_X1: {
+                case 21: {
                     Object v1 = stack.pop();
                     Object v2 = stack.pop();
                     Object v3 = stack.pop();
@@ -295,7 +286,7 @@ public final class VMInterpreter {
                     stack.push(v1);
                     break;
                 }
-                case DUP2_X2: {
+                case 22: {
                     Object v1 = stack.pop();
                     Object v2 = stack.pop();
                     Object v3 = stack.pop();
@@ -308,14 +299,14 @@ public final class VMInterpreter {
                     stack.push(v1);
                     break;
                 }
-                case POP:
+                case 16:
                     stack.pop();
                     break;
-                case POP2:
+                case 23:
                     stack.pop();
                     stack.pop();
                     break;
-                case SWAP: {
+                case 17: {
                     Object a = stack.pop();
                     Object b = stack.pop();
                     stack.push(a);
@@ -324,123 +315,123 @@ public final class VMInterpreter {
                 }
 
                 // --- Integer arithmetic ---
-                case IADD: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a + b); break; }
-                case ISUB: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a - b); break; }
-                case IMUL: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a * b); break; }
-                case IDIV: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a / b); break; }
-                case IREM: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a % b); break; }
-                case INEG: stack.push(-unboxInt(stack.pop())); break;
+                case 24: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a + b); break; }
+                case 25: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a - b); break; }
+                case 26: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a * b); break; }
+                case 27: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a / b); break; }
+                case 28: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a % b); break; }
+                case 29: stack.push(-unboxInt(stack.pop())); break;
 
                 // --- Long arithmetic ---
-                case LADD: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a + b); break; }
-                case LSUB: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a - b); break; }
-                case LMUL: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a * b); break; }
-                case LDIV: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a / b); break; }
-                case LREM: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a % b); break; }
-                case LNEG: stack.push(-(Long) stack.pop()); break;
+                case 30: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a + b); break; }
+                case 31: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a - b); break; }
+                case 32: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a * b); break; }
+                case 33: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a / b); break; }
+                case 34: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a % b); break; }
+                case 35: stack.push(-(Long) stack.pop()); break;
 
                 // --- Integer bitwise ---
-                case IAND: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a & b); break; }
-                case IOR:  { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a | b); break; }
-                case IXOR: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a ^ b); break; }
-                case ISHL: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a << b); break; }
-                case ISHR: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a >> b); break; }
-                case IUSHR:{ int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a >>> b); break; }
+                case 36: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a & b); break; }
+                case 37:  { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a | b); break; }
+                case 38: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a ^ b); break; }
+                case 39: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a << b); break; }
+                case 40: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a >> b); break; }
+                case 41:{ int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(a >>> b); break; }
 
                 // --- Long bitwise ---
-                case LAND: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a & b); break; }
-                case LOR:  { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a | b); break; }
-                case LXOR: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a ^ b); break; }
-                case LSHL: { long b = ((Number) stack.pop()).longValue(); long a = (Long) stack.pop(); stack.push(a << b); break; }
-                case LSHR: { long b = ((Number) stack.pop()).longValue(); long a = (Long) stack.pop(); stack.push(a >> b); break; }
-                case LUSHR:{ long b = ((Number) stack.pop()).longValue(); long a = (Long) stack.pop(); stack.push(a >>> b); break; }
+                case 42: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a & b); break; }
+                case 43:  { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a | b); break; }
+                case 44: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(a ^ b); break; }
+                case 45: { long b = ((Number) stack.pop()).longValue(); long a = (Long) stack.pop(); stack.push(a << b); break; }
+                case 46: { long b = ((Number) stack.pop()).longValue(); long a = (Long) stack.pop(); stack.push(a >> b); break; }
+                case 47:{ long b = ((Number) stack.pop()).longValue(); long a = (Long) stack.pop(); stack.push(a >>> b); break; }
 
                 // --- Float arithmetic ---
-                case FADD: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(a + b); break; }
-                case FSUB: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(a - b); break; }
-                case FMUL: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(a * b); break; }
-                case FDIV: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(a / b); break; }
-                case FREM: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(a % b); break; }
-                case FNEG: stack.push(-(Float) stack.pop()); break;
+                case 48: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(a + b); break; }
+                case 49: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(a - b); break; }
+                case 50: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(a * b); break; }
+                case 51: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(a / b); break; }
+                case 52: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(a % b); break; }
+                case 53: stack.push(-(Float) stack.pop()); break;
 
                 // --- Double arithmetic ---
-                case DADD: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(a + b); break; }
-                case DSUB: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(a - b); break; }
-                case DMUL: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(a * b); break; }
-                case DDIV: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(a / b); break; }
-                case DREM: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(a % b); break; }
-                case DNEG: stack.push(-(Double) stack.pop()); break;
+                case 54: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(a + b); break; }
+                case 55: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(a - b); break; }
+                case 56: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(a * b); break; }
+                case 57: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(a / b); break; }
+                case 58: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(a % b); break; }
+                case 59: stack.push(-(Double) stack.pop()); break;
 
                 // --- Comparisons ---
-                case ICMP: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(Integer.compare(a, b)); break; }
-                case LCMP: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(Long.compare(a, b)); break; }
-                case FCMPG: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(fcmpg(a, b)); break; }
-                case FCMPL: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(fcmpl(a, b)); break; }
-                case DCMPG: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(dcmpg(a, b)); break; }
-                case DCMPL: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(dcmpl(a, b)); break; }
+                case 60: { int b = unboxInt(stack.pop()); int a = unboxInt(stack.pop()); stack.push(Integer.compare(a, b)); break; }
+                case 61: { long b = (Long) stack.pop(); long a = (Long) stack.pop(); stack.push(Long.compare(a, b)); break; }
+                case 62: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(fcmpg(a, b)); break; }
+                case 63: { float b = (Float) stack.pop(); float a = (Float) stack.pop(); stack.push(fcmpl(a, b)); break; }
+                case 64: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(dcmpg(a, b)); break; }
+                case 65: { double b = (Double) stack.pop(); double a = (Double) stack.pop(); stack.push(dcmpl(a, b)); break; }
 
                 // --- Branches ---
-                case GOTO: {
+                case 82: {
                     // GOTO always jumps; the varint is the target offset, no fall-through
                     int target = (int) readVarint(program, pc);
                     pc = target;
                     break;
                 }
-                case IFEQ: {
+                case 66: {
                     int target = (int) readVarint(program, pc); pc = consumedTL.get()[0];
                     if (unboxInt(stack.pop()) == 0) pc = target; break;
                 }
-                case IFNE: {
+                case 67: {
                     int target = (int) readVarint(program, pc); pc = consumedTL.get()[0];
                     if (unboxInt(stack.pop()) != 0) pc = target; break;
                 }
-                case IFLT: {
+                case 68: {
                     int target = (int) readVarint(program, pc); pc = consumedTL.get()[0];
                     if (unboxInt(stack.pop()) < 0) pc = target; break;
                 }
-                case IFGE: {
+                case 69: {
                     int target = (int) readVarint(program, pc); pc = consumedTL.get()[0];
                     if (unboxInt(stack.pop()) >= 0) pc = target; break;
                 }
-                case IFGT: {
+                case 70: {
                     int target = (int) readVarint(program, pc); pc = consumedTL.get()[0];
                     if (unboxInt(stack.pop()) > 0) pc = target; break;
                 }
-                case IFLE: {
+                case 71: {
                     int target = (int) readVarint(program, pc); pc = consumedTL.get()[0];
                     if (unboxInt(stack.pop()) <= 0) pc = target; break;
                 }
-                case IF_ICMPEQ: {
+                case 72: {
                     int target = (int) readVarint(program, pc); pc = consumedTL.get()[0];
                     int v2 = unboxInt(stack.pop()); int v1 = unboxInt(stack.pop());
                     if (v1 == v2) pc = target; break;
                 }
-                case IF_ICMPNE: {
+                case 73: {
                     int target = (int) readVarint(program, pc); pc = consumedTL.get()[0];
                     int v2 = unboxInt(stack.pop()); int v1 = unboxInt(stack.pop());
                     if (v1 != v2) pc = target; break;
                 }
-                case IF_ICMPLT: {
+                case 74: {
                     int target = (int) readVarint(program, pc); pc = consumedTL.get()[0];
                     int v2 = unboxInt(stack.pop()); int v1 = unboxInt(stack.pop());
                     if (v1 < v2) pc = target; break;
                 }
-                case IF_ICMPGE: {
+                case 75: {
                     int target = (int) readVarint(program, pc); pc = consumedTL.get()[0];
                     int v2 = unboxInt(stack.pop()); int v1 = unboxInt(stack.pop());
                     if (v1 >= v2) pc = target; break;
                 }
-                case IF_ICMPGT: {
+                case 76: {
                     int target = (int) readVarint(program, pc); pc = consumedTL.get()[0];
                     int v2 = unboxInt(stack.pop()); int v1 = unboxInt(stack.pop());
                     if (v1 > v2) pc = target; break;
                 }
-                case IF_ICMPLE: {
+                case 77: {
                     int target = (int) readVarint(program, pc); pc = consumedTL.get()[0];
                     int v2 = unboxInt(stack.pop()); int v1 = unboxInt(stack.pop());
                     if (v1 <= v2) pc = target; break;
                 }
-                case IF_ACMPEQ: {
+                case 78: {
                     int target = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     Object o2 = stack.pop();
@@ -448,7 +439,7 @@ public final class VMInterpreter {
                     if (o1 == o2) pc = target;
                     break;
                 }
-                case IF_ACMPNE: {
+                case 79: {
                     int target = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     Object o2 = stack.pop();
@@ -456,13 +447,13 @@ public final class VMInterpreter {
                     if (o1 != o2) pc = target;
                     break;
                 }
-                case IFNULL: {
+                case 80: {
                     int target = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     if (stack.pop() == null) pc = target;
                     break;
                 }
-                case IFNONNULL: {
+                case 81: {
                     int target = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     if (stack.pop() != null) pc = target;
@@ -470,10 +461,10 @@ public final class VMInterpreter {
                 }
 
                 // --- Method invocation ---
-                case INVOKESTATIC:
-                case INVOKEVIRTUAL:
-                case INVOKESPECIAL:
-                case INVOKEINTERFACE: {
+                case 83:
+                case 84:
+                case 85:
+                case 86: {
                     int idx = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     String[] desc = (String[]) constants[idx];
@@ -482,8 +473,8 @@ public final class VMInterpreter {
                 }
 
                 // --- Field access ---
-                case GETFIELD:
-                case GETSTATIC: {
+                case 87:
+                case 89: {
                     int idx = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     String[] desc = (String[]) constants[idx];
@@ -491,8 +482,8 @@ public final class VMInterpreter {
                     stack.push(getField(desc, obj));
                     break;
                 }
-                case PUTFIELD:
-                case PUTSTATIC: {
+                case 88:
+                case 90: {
                     int idx = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     String[] desc = (String[]) constants[idx];
@@ -503,21 +494,21 @@ public final class VMInterpreter {
                 }
 
                 // --- Object creation ---
-                case NEW: {
+                case 91: {
                     int idx = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     String className = (String) constants[idx];
                     stack.push(createObject(className));
                     break;
                 }
-                case NEWARRAY: {
+                case 92: {
                     int typeCode = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     int length = (Integer) stack.pop();
                     stack.push(createPrimitiveArray(typeCode, length));
                     break;
                 }
-                case ANEWARRAY: {
+                case 93: {
                     int idx = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     int length = unboxInt(stack.pop());
@@ -525,7 +516,7 @@ public final class VMInterpreter {
                     stack.push(createObjectArray(className, length));
                     break;
                 }
-                case MULTIANEWARRAY: {
+                case 94: {
                     int idx = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     int dims = (int) readVarint(program, pc);
@@ -540,46 +531,46 @@ public final class VMInterpreter {
                 }
 
                 // --- Array access ---
-                case IALOAD: case LALOAD: case FALOAD: case DALOAD:
-                case AALOAD: case BALOAD: case CALOAD: case SALOAD: {
+                case 95: case 96: case 97: case 98:
+                case 99: case 100: case 101: case 102: {
                     int index = (Integer) stack.pop();
                     Object array = stack.pop();
                     stack.push(Array.get(array, index));
                     break;
                 }
-                case IASTORE: case LASTORE: case FASTORE: case DASTORE:
-                case AASTORE: case BASTORE: case CASTORE: case SASTORE: {
+                case 103: case 104: case 105: case 106:
+                case 107: case 108: case 109: case 110: {
                     Object value = stack.pop();
                     int index = (Integer) stack.pop();
                     Object array = stack.pop();
                     Array.set(array, index, value);
                     break;
                 }
-                case ARRAYLENGTH: {
+                case 111: {
                     Object array = stack.pop();
                     stack.push(Array.getLength(array));
                     break;
                 }
 
                 // --- Primitive conversions ---
-                case I2L: stack.push((long) unboxInt(stack.pop())); break;
-                case I2F: stack.push((float) unboxInt(stack.pop())); break;
-                case I2D: stack.push((double) unboxInt(stack.pop())); break;
-                case L2I: stack.push((int) (long) (Long) stack.pop()); break;
-                case L2F: stack.push((float) (long) (Long) stack.pop()); break;
-                case L2D: stack.push((double) (long) (Long) stack.pop()); break;
-                case F2I: stack.push((int) (float) (Float) stack.pop()); break;
-                case F2L: stack.push((long) (float) (Float) stack.pop()); break;
-                case F2D: stack.push((double) (float) (Float) stack.pop()); break;
-                case D2I: stack.push((int) (double) (Double) stack.pop()); break;
-                case D2L: stack.push((long) (double) (Double) stack.pop()); break;
-                case D2F: stack.push((float) (double) (Double) stack.pop()); break;
-                case I2B: stack.push((byte) unboxInt(stack.pop())); break;
-                case I2C: stack.push((char) unboxInt(stack.pop())); break;
-                case I2S: stack.push((short) unboxInt(stack.pop())); break;
+                case 112: stack.push((long) unboxInt(stack.pop())); break;
+                case 113: stack.push((float) unboxInt(stack.pop())); break;
+                case 114: stack.push((double) unboxInt(stack.pop())); break;
+                case 115: stack.push((int) (long) (Long) stack.pop()); break;
+                case 116: stack.push((float) (long) (Long) stack.pop()); break;
+                case 117: stack.push((double) (long) (Long) stack.pop()); break;
+                case 118: stack.push((int) (float) (Float) stack.pop()); break;
+                case 119: stack.push((long) (float) (Float) stack.pop()); break;
+                case 120: stack.push((double) (float) (Float) stack.pop()); break;
+                case 121: stack.push((int) (double) (Double) stack.pop()); break;
+                case 122: stack.push((long) (double) (Double) stack.pop()); break;
+                case 123: stack.push((float) (double) (Double) stack.pop()); break;
+                case 124: stack.push((byte) unboxInt(stack.pop())); break;
+                case 125: stack.push((char) unboxInt(stack.pop())); break;
+                case 126: stack.push((short) unboxInt(stack.pop())); break;
 
                 // --- Type checks ---
-                case CHECKCAST: {
+                case 127: {
                     // operand: constant table index (class name) — skip the varint
                     pc = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
@@ -587,7 +578,7 @@ public final class VMInterpreter {
                     // Just leave the object on the stack; JVM already verified it
                     break;
                 }
-                case INSTANCEOF: {
+                case 128: {
                     int idx = (int) readVarint(program, pc);
                     pc = consumedTL.get()[0];
                     String className = (String) constants[idx];
@@ -597,20 +588,20 @@ public final class VMInterpreter {
                 }
 
                 // --- Return ---
-                case RETURN:
+                case 129:
                     return null;
-                case IRETURN:
+                case 130:
                     return ((Integer) stack.pop());
-                case LRETURN:
+                case 131:
                     return ((Long) stack.pop());
-                case FRETURN:
+                case 132:
                     return ((Float) stack.pop());
-                case DRETURN:
+                case 133:
                     return ((Double) stack.pop());
-                case ARETURN:
+                case 134:
                     return stack.pop();
 
-                case ATHROW: {
+                case 135: {
                     Object exc = stack.pop();
                     if (exc instanceof RuntimeException) throw (RuntimeException) exc;
                     if (exc instanceof Error) throw (Error) exc;
@@ -619,7 +610,7 @@ public final class VMInterpreter {
                 }
 
                 // Synchronization — actual reentrant locking
-                case MONITORENTER: {
+                case 136: {
                     Object lock = stack.pop();
                     MonitorState ms = monitorMap.computeIfAbsent(
                         System.identityHashCode(lock),
@@ -628,7 +619,7 @@ public final class VMInterpreter {
                     ms.count++;
                     break;
                 }
-                case MONITOREXIT: {
+                case 137: {
                     Object lock = stack.pop();
                     MonitorState ms = monitorMap.get(System.identityHashCode(lock));
                     if (ms != null && ms.count > 0) {
@@ -638,7 +629,7 @@ public final class VMInterpreter {
                     break;
                 }
 
-                case NOP:
+                case 138:
                     break;
 
                 default:
