@@ -101,8 +101,7 @@ public final class InterpreterObfuscator {
 
             if (name.equals("<clinit>")) {
                 hasClinit = true;
-                MethodVisitor mv = super.visitMethod(access, newMethodName, desc, sig, exceptions);
-                return new ClinitInjector(mv, className, seed);
+                return super.visitMethod(access, newMethodName, desc, sig, exceptions);
             }
 
             MethodVisitor mv = super.visitMethod(access, newMethodName, desc, sig, exceptions);
@@ -135,15 +134,12 @@ public final class InterpreterObfuscator {
                     junkFieldName(i), "I", null, rng.nextInt());
             }
 
-            // If no <clinit> existed, create one for dispatch init
+            // If no <clinit> existed, create one that calls a junk method
             if (!hasClinit) {
                 MethodVisitor mv = super.visitMethod(
                     Opcodes.ACC_STATIC, "<clinit>", "()V", null, null);
                 mv.visitCode();
-                mv.visitLdcInsn(seed);
-                mv.visitMethodInsn(Opcodes.INVOKESTATIC, className,
-                    "initDispatch", "(J)V", false);
-                // Call a junk method
+                // Call junk method to prevent stripping
                 mv.visitMethodInsn(Opcodes.INVOKESTATIC, className,
                     junkMethodName(0), "()I", false);
                 mv.visitInsn(Opcodes.POP);
