@@ -102,23 +102,31 @@ public final class ClassRewriter {
         }
     }
 
-    /** Bundle the VM runtime class (VMInterpreter) into the output jar.
-     *  This makes the protected JAR self-contained — no external dependencies. */
+    /** Bundle the VM runtime and its dependencies into the output jar.
+     *  This makes the protected JAR fully self-contained. */
     private static void bundleVMRuntime(JarOutputStream jos, ObfuscatedNames names,
                                          CliOptions opts) throws Exception {
-        String vmPath = "opaddon/vm/VMInterpreter.class";
-        java.io.InputStream is = ClassRewriter.class.getClassLoader().getResourceAsStream(vmPath);
-        if (is == null) {
-            if (opts.isVerbose()) System.err.println("[virtualizer] WARN: VM class not found on classpath");
-            return;
+        // Bundle VM class + its two dependencies
+        String[] paths = {
+            "opaddon/vm/VMInterpreter.class",
+            "opaddon/isa/Opcode.class",
+            "opaddon/hardening/StreamCipher.class",
+        };
+        for (String vmPath : paths) {
+            java.io.InputStream is = ClassRewriter.class.getClassLoader()
+                .getResourceAsStream(vmPath);
+            if (is == null) {
+                if (opts.isVerbose()) System.err.println("[virtualizer] WARN: " + vmPath + " not found");
+                continue;
+            }
+            byte[] data = is.readAllBytes(); is.close();
+            // Only obfuscate the VM class itself
+            if (vmPath.equals("opaddon/vm/VMInterpreter.class"))
+                data = opaddon.hardening.InterpreterObfuscator.obfuscate(data, opts.getSeed(), null);
+            jos.putNextEntry(new JarEntry(vmPath));
+            jos.write(data);
+            jos.closeEntry();
         }
-        byte[] vmBytes = is.readAllBytes();
-        is.close();
-        vmBytes = opaddon.hardening.InterpreterObfuscator.obfuscate(vmBytes, opts.getSeed(), null);
-        JarEntry vmEntry = new JarEntry(vmPath); // keep original path for self-contained jar
-        jos.putNextEntry(vmEntry);
-        jos.write(vmBytes);
-        jos.closeEntry();
     }
 
     public static byte[] processClass(byte[] classBytes, CliOptions opts) {
