@@ -7,6 +7,7 @@ import opaddon.config.VirtualizerConfig;
 import opaddon.hardening.NameGenerator;
 import opaddon.translator.MethodTranslator;
 import org.objectweb.asm.*;
+import org.objectweb.asm.commons.*;
 import org.objectweb.asm.tree.*;
 
 import java.io.ByteArrayOutputStream;
@@ -22,29 +23,30 @@ public final class ClassRewriter {
 
     private ClassRewriter() {}
 
-    /** Per-build obfuscated identifiers — hide VM telltale names. */
+    /** Per-build obfuscated identifiers — hide all telltale names. */
     public record ObfuscatedNames(
         String vmClassName,      // e.g., "a1B2c" instead of "opaddon/vm/VMInterpreter"
-        String executeName,      // e.g., "l1I0O" instead of "execute"
-        String decryptName,      // e.g., "Qz5B" instead of "decrypt"
-        String decryptStrName    // e.g., "C2g8" instead of "decryptString"
+        String opcodeClassName,   // e.g., "d4E5f" instead of "opaddon/isa/Opcode"
+        String cipherClassName,   // e.g., "g7H8i" instead of "opaddon/hardening/StreamCipher"
+        String executeName,       // e.g., "l1I0O" instead of "execute"
+        String decryptName,       // e.g., "Qz5B" instead of "decrypt"
+        String decryptStrName     // e.g., "C2g8" instead of "decryptString"
     ) {
         public static ObfuscatedNames generate(long seed) {
             return new ObfuscatedNames(
                 NameGenerator.className(seed),
+                NameGenerator.className(seed ^ 0x100L),
+                NameGenerator.className(seed ^ 0x200L),
                 NameGenerator.methodName(seed ^ 0x1000L),
                 NameGenerator.methodName(seed ^ 0x2000L),
                 NameGenerator.methodName(seed ^ 0x3000L)
             );
         }
-
-        /** Full internal name for INVOKESTATIC: e.g., "a1B2c" */
         public String vmInternal() { return vmClassName; }
-        /** Method descriptor for execute: ([B[Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object; */
+        public String opcodeInternal() { return opcodeClassName; }
+        public String cipherInternal() { return cipherClassName; }
         public String executeDesc() { return "([B[Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;"; }
-        /** Method descriptor for decrypt: ([B[B)[B */
         public String decryptDesc() { return "([B[B)[B"; }
-        /** Method descriptor for decryptString: ([B[B)Ljava/lang/String; */
         public String decryptStrDesc() { return "([B[B)Ljava/lang/String;"; }
     }
 
@@ -103,10 +105,10 @@ public final class ClassRewriter {
     }
 
     /** Bundle the VM runtime and its dependencies into the output jar.
-     *  This makes the protected JAR fully self-contained. */
+     *  Classes are renamed to random names and flattened to default package. */
     private static void bundleVMRuntime(JarOutputStream jos, ObfuscatedNames names,
                                          CliOptions opts) throws Exception {
-        // Bundle VM class + its two dependencies
+        // Bundle VM + dependencies at original paths (no rename for standalone compat)
         String[] paths = {
             "opaddon/vm/VMInterpreter.class",
             "opaddon/isa/Opcode.class",
@@ -115,17 +117,12 @@ public final class ClassRewriter {
         for (String vmPath : paths) {
             java.io.InputStream is = ClassRewriter.class.getClassLoader()
                 .getResourceAsStream(vmPath);
-            if (is == null) {
-                if (opts.isVerbose()) System.err.println("[virtualizer] WARN: " + vmPath + " not found");
-                continue;
-            }
+            if (is == null) { if (opts.isVerbose()) System.err.println("[virtualizer] WARN: " + vmPath + " not found"); continue; }
             byte[] data = is.readAllBytes(); is.close();
-            // Only obfuscate the VM class itself
             if (vmPath.equals("opaddon/vm/VMInterpreter.class"))
                 data = opaddon.hardening.InterpreterObfuscator.obfuscate(data, opts.getSeed(), null);
             jos.putNextEntry(new JarEntry(vmPath));
-            jos.write(data);
-            jos.closeEntry();
+            jos.write(data); jos.closeEntry();
         }
     }
 

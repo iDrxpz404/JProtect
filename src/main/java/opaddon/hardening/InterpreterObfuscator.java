@@ -25,11 +25,15 @@ public final class InterpreterObfuscator {
         ClassReader cr = new ClassReader(classBytes);
         ClassWriter cw = new ClassWriter(cr, ClassWriter.COMPUTE_FRAMES);
         String oldName = cr.getClassName();
-        String newName = names != null ? names.vmInternal() : oldName;
-
-        // Build remapping: old internal name → new internal name
+        // Only rename if names provided and vmInternal differs from original
+        String newName = oldName;
         java.util.Map<String, String> remap = new java.util.HashMap<>();
-        remap.put(oldName, newName);
+        if (names != null) {
+            newName = names.vmInternal();
+            remap.put("opaddon/vm/VMInterpreter", names.vmInternal());
+            remap.put("opaddon/isa/Opcode", names.opcodeInternal());
+            remap.put("opaddon/hardening/StreamCipher", names.cipherInternal());
+        }
 
         // Also remap method names
         if (names != null) {
