@@ -1,0 +1,9 @@
+{
+  "preset": "aggressive",
+  "seed": 31337,
+  "virtualize": ["LicenseManager"],
+  "stringEncryption": true,
+  "opcodeShuffle": true,
+  "integrityCheck": true,
+  "polymorphicVM": true
+}

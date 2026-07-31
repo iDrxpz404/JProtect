@@ -1,0 +1,13 @@
+target/
+demo/original/
+demo/original.jar
+demo/protected/
+demo/protected.jar
+demo/protected-bal.jar
+*.class
+*.jar
+*.bak
+!demo/aggressive.json
+!demo/balanced.json
+!demo/build-and-verify.sh
+*.env
