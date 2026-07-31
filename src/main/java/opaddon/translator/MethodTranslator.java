@@ -121,6 +121,8 @@ public final class MethodTranslator {
                         translateTableSwitch((TableSwitchInsnNode) insn); break;
                     case AbstractInsnNode.LOOKUPSWITCH_INSN:
                         translateLookupSwitch((LookupSwitchInsnNode) insn); break;
+                    case AbstractInsnNode.INVOKE_DYNAMIC_INSN:
+                        translateInvokeDynamic((InvokeDynamicInsnNode) insn); break;
                     default: break;
                 }
             }
@@ -153,6 +155,8 @@ public final class MethodTranslator {
                 } else if (insn.getType() == AbstractInsnNode.LOOKUPSWITCH_INSN) {
                     LookupSwitchInsnNode ls = (LookupSwitchInsnNode) insn;
                     isaIdx += ls.labels.size() * 3 + 2;
+                } else if (insn.getType() == AbstractInsnNode.INVOKE_DYNAMIC_INSN) {
+                    isaIdx += 10; // NEW + INVOKESPECIAL + N*append + toString
                 } else {
                     isaIdx += 1;
                 }
@@ -519,6 +523,61 @@ public final class MethodTranslator {
             }
             emit(Instruction.pop());                             // discard key
             emit(Instruction.goto_(labelIndex(dflt)));           // jump to default
+        }
+
+        private void translateInvokeDynamic(InvokeDynamicInsnNode insn) {
+            if (insn.bsm.getOwner().equals("java/lang/invoke/StringConcatFactory")) {
+                translateStringConcat(insn); return;
+            }
+            throw new UnsupportedOperationException("indy: " + insn.bsm.getOwner());
+        }
+
+        private void translateStringConcat(InvokeDynamicInsnNode insn) {
+            String recipe = (String) insn.bsmArgs[0];
+            int sbCtor = constIdx(new String[]{"java/lang/StringBuilder","<init>","()V"});
+            int appStr = constIdx(new String[]{"java/lang/StringBuilder","append",
+                "(Ljava/lang/String;)Ljava/lang/StringBuilder;"});
+            int appObj = constIdx(new String[]{"java/lang/StringBuilder","append",
+                "(Ljava/lang/Object;)Ljava/lang/StringBuilder;"});
+            int toStr = constIdx(new String[]{"java/lang/StringBuilder","toString",
+                "()Ljava/lang/String;"});
+
+            // Count args from recipe, pop from stack into temp locals
+            int argCount = 0;
+            for (int i = 0; i < recipe.length(); i++)
+                if (recipe.charAt(i) == '') argCount++;
+            int base = 200;
+            for (int a = argCount - 1; a >= 0; a--)
+                emit(Instruction.astore(base + a));
+
+            // Build: NEW StringBuilder; INVOKESPECIAL <init>
+            emit(Instruction.new_(constIdx("java/lang/StringBuilder")));
+            emit(Instruction.invokespecial(sbCtor));
+
+            // Parse recipe: emit append calls for each element
+            int ai = 0, ci = 0;
+            StringBuilder lit = new StringBuilder();
+            for (int i = 0; i < recipe.length(); i++) {
+                char c = recipe.charAt(i);
+                if (c == '') {
+                    flushLit(lit, appStr); i++;
+                    emit(Instruction.aload(base + ai));
+                    emit(Instruction.invokevirtual(appObj)); ai++;
+                } else if (c == '') {
+                    flushLit(lit, appStr); i++;
+                    emit(Instruction.ldc(constIdx(insn.bsmArgs[1 + ci])));
+                    emit(Instruction.invokevirtual(appStr)); ci++;
+                } else { lit.append(c); }
+            }
+            flushLit(lit, appStr);
+            emit(Instruction.invokevirtual(toStr));
+        }
+
+        private void flushLit(StringBuilder lit, int appStrIdx) {
+            if (lit.length() == 0) return;
+            emit(Instruction.ldc(constIdx(lit.toString())));
+            emit(Instruction.invokevirtual(appStrIdx));
+            lit.setLength(0);
         }
 
         private void translateMultiANewArray(MultiANewArrayInsnNode insn) {

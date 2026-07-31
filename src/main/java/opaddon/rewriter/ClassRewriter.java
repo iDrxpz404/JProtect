@@ -162,8 +162,14 @@ public final class ClassRewriter {
     }
 
     private static boolean containsInvokeDynamic(MethodNode m) {
+        // StringConcatFactory bridge only for explicitly @Virtualize-annotated methods
+        boolean hasAnnotation = hasVirtualizeAnnotation(m);
         for (AbstractInsnNode insn : m.instructions) {
             if (insn.getType() == AbstractInsnNode.INVOKE_DYNAMIC_INSN) {
+                InvokeDynamicInsnNode indy = (InvokeDynamicInsnNode) insn;
+                if (hasAnnotation && indy.bsm.getOwner()
+                    .equals("java/lang/invoke/StringConcatFactory"))
+                    continue;
                 return true;
             }
         }
