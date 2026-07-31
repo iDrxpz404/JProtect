@@ -177,11 +177,11 @@ public final class ClassRewriter {
             this.constantsField = opaddon.hardening.NameGenerator.fieldName(
                 seed ^ (0x6000L + nextId()));
 
-            // XOR encrypt the program bytes
-            this.key = opaddon.hardening.StreamCipher.generateKey(seed, className, plain.length);
-            byte[] enc = plain.clone();
-            opaddon.hardening.StreamCipher.xor(enc, this.key);
-            this.encryptedProgram = enc;
+            // AES-256-GCM authenticated encryption
+            opaddon.hardening.StreamCipher.EncryptResult encResult =
+                opaddon.hardening.StreamCipher.encrypt(seed, className, plain);
+            this.encryptedProgram = encResult.encrypted();
+            this.key = encResult.keyBytes();
 
             // Encrypt string constants (but NOT class names / descriptors)
             this.encryptedStrings = new byte[constants.length][];
@@ -192,11 +192,11 @@ public final class ClassRewriter {
                         // Skip class names (contain '/') and descriptors
                         if (s.indexOf('/') >= 0 || s.startsWith("(")) continue;
                         byte[] strBytes = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                        // Use same key as program encryption so decrypt works
-                        byte[] strBytesEnc = new byte[strBytes.length];
-                        System.arraycopy(strBytes, 0, strBytesEnc, 0, strBytes.length);
-                        opaddon.hardening.StreamCipher.xor(strBytesEnc, this.key);
-                        encryptedStrings[i] = strBytesEnc;
+                        // XOR with program key for string encryption
+                        byte[] strEnc = new byte[strBytes.length];
+                        for (int j = 0; j < strBytes.length; j++)
+                            strEnc[j] = (byte)(strBytes[j] ^ this.key[j % this.key.length]);
+                        encryptedStrings[i] = strEnc;
                     }
                 }
             }

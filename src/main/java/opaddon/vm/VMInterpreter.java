@@ -117,17 +117,14 @@ public final class VMInterpreter {
     }
 
     /**
-     * Decrypt an XOR-encrypted program blob from Base64-encoded strings.
-     * Compact {@code <clinit>} call: {@code decrypt(b64data, b64key)}.
+     * AES-256-GCM authenticated decryption of program blob.
+     * Format: Base64(salt[16] + IV[12] + ciphertext+tag)
+     * Throws SecurityException on authentication failure (tamper detection).
      */
     public static byte[] decrypt(String encodedData, String encodedKey) {
-        byte[] encrypted = java.util.Base64.getDecoder().decode(encodedData);
+        byte[] combined = java.util.Base64.getDecoder().decode(encodedData);
         byte[] key = java.util.Base64.getDecoder().decode(encodedKey);
-        int klen = key.length;
-        for (int i = 0; i < encrypted.length; i++) {
-            encrypted[i] ^= key[i % klen];
-        }
-        return encrypted;
+        return opaddon.hardening.StreamCipher.decrypt(combined, key);
     }
 
     /**
@@ -149,8 +146,13 @@ public final class VMInterpreter {
      * Program format: [exception_handler_count varint] [handler*] [instructions...]
      * Each handler: [start_pc varint] [end_pc varint] [handler_pc varint] [type_const_idx varint]
      * type_const_idx of -1 means "finally" (catches all exceptions).
+     *
+     * @throws SecurityException if anti-tamper check fails
      */
     public static Object execute(byte[] program, Object[] constants, Object[] args) {
+        // Anti-tamper: verify program integrity before execution
+        verifyIntegrity(program);
+
         java.util.LinkedList<Object> rawStack = new java.util.LinkedList<>();
         Deque<Object> stack = rawStack;
         Object[] locals = new Object[256];
@@ -685,6 +687,46 @@ public final class VMInterpreter {
         if (o instanceof Short) return (int) (Short) o;
         if (o instanceof Byte) return (int) (Byte) o;
         return o;
+    }
+
+    /** Structural integrity check: validates program header before execution. */
+    private static void verifyIntegrity(byte[] program) {
+        if (program == null || program.length < 2) {
+            throw new SecurityException("PROGRAM integrity failure: null or too short");
+        }
+        // Verify handler count is reasonable
+        int handlerCount = 0;
+        try {
+            int[] pos = new int[1];
+            handlerCount = (int) readVarintAt(program, 0, pos);
+            if (handlerCount < 0 || handlerCount > 100) {
+                throw new SecurityException("PROGRAM integrity failure: invalid handler count");
+            }
+            // Verify the program has enough bytes for declared handlers + shuffle header
+            int minSize = pos[0] + handlerCount * 4 * 5 + 1; // handlers + shuffle flag
+            if (program.length < minSize) {
+                throw new SecurityException("PROGRAM integrity failure: truncated");
+            }
+        } catch (Exception e) {
+            if (e instanceof SecurityException) throw (SecurityException) e;
+            throw new SecurityException("PROGRAM integrity failure: malformed header");
+        }
+    }
+
+    private static long readVarintAt(byte[] data, int offset, int[] outPos) {
+        long result = 0;
+        int shift = 0;
+        int p = offset;
+        byte b = 0;
+        do {
+            if (p >= data.length) break;
+            b = data[p++];
+            result |= (long)(b & 0x7F) << shift;
+            shift += 7;
+        } while ((b & 0x80) != 0);
+        if (p < data.length && (b & 0x40) != 0) result |= -(1L << shift);
+        outPos[0] = p;
+        return result;
     }
 
     /** Unbox any Number (or Character) to int for arithmetic/comparisons. */
