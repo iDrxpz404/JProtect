@@ -67,16 +67,18 @@ public final class VMInterpreter {
 
     static int[] generateDispatchTable(long seed) {
         int[] table = new int[256];
-        // Generate permutation of ordinals from seed (same as obfuscator)
-        java.util.List<Integer> perm = new java.util.ArrayList<>();
-        for (int i = 0; i < Opcode.values().length; i++) perm.add(i);
-        java.util.Collections.shuffle(perm, new java.util.Random(seed));
-        // Junk entries
         java.util.Random rng = new java.util.Random(seed ^ 0xCAFEBABE);
         for (int i = 0; i < 256; i++) table[i] = -(1 + rng.nextInt(64));
-        // Map each opcode byte → permuted ordinal
-        for (Opcode o : Opcode.values()) {
-            table[o.code() & 0xFF] = perm.get(o.ordinal());
+        if (seed == 0) {
+            // Identity mapping: opcode_byte → ordinal
+            for (Opcode o : Opcode.values()) table[o.code() & 0xFF] = o.ordinal();
+        } else {
+            // Permuted mapping: opcode_byte → perm[ordinal]
+            java.util.List<Integer> perm = new java.util.ArrayList<>();
+            for (int i = 0; i < Opcode.values().length; i++) perm.add(i);
+            java.util.Collections.shuffle(perm, new java.util.Random(seed));
+            for (Opcode o : Opcode.values())
+                table[o.code() & 0xFF] = perm.get(o.ordinal());
         }
         return table;
     }
