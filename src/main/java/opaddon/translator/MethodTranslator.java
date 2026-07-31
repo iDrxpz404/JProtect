@@ -622,27 +622,36 @@ public final class MethodTranslator {
         // For now, just a placeholder; Phase 4 will fill in proper offset computation.
 
         private void resolveBranches() {
-            // Compute byte offsets of instructions (relative to instruction start)
-            int[] offsets = computeOffsets();
-
-            // Determine header size (including shuffle flag + optional mapping)
             boolean hasShuffle = reverseMapping != null;
             int hdrSize = opaddon.isa.Encoder.headerSize(pendingHandlers.size(), hasShuffle);
-            // Shift all instruction offsets by header size
-            for (int i = 0; i < offsets.length; i++) {
-                offsets[i] += hdrSize;
-            }
-
-            // Patch branch instructions with final absolute offsets
+            // Record target instruction indices before any patching
+            java.util.Map<Integer, Integer> targetMap = new java.util.HashMap<>();
             for (int i = 0; i < instructions.size(); i++) {
                 Instruction insn = instructions.get(i);
-                if (isBranch(insn.opcode())) {
-                    int targetIdx = (int) insn.operand(0);
-                    if (targetIdx >= 0 && targetIdx < offsets.length) {
-                        instructions.set(i, new Instruction(insn.opcode(), offsets[targetIdx]));
+                if (isBranch(insn.opcode()))
+                    targetMap.put(i, (int) insn.operand(0));
+            }
+            // Iteratively patch until offsets stabilize (max 20 iterations)
+            int iter = 20;
+            while (iter-- > 0) {
+                int[] offsets = computeOffsets();
+                for (int o = 0; o < offsets.length; o++) offsets[o] += hdrSize;
+                boolean stable = true;
+                for (java.util.Map.Entry<Integer, Integer> e : targetMap.entrySet()) {
+                    int idx = e.getKey(), tgt = e.getValue();
+                    if (tgt >= 0 && tgt < offsets.length) {
+                        Instruction old = instructions.get(idx);
+                        long newTarget = offsets[tgt];
+                        if (old.operand(0) != newTarget) {
+                            instructions.set(idx, new Instruction(old.opcode(), newTarget));
+                            stable = false;
+                        }
                     }
                 }
+                if (stable) break;
             }
+            int[] offsets = computeOffsets();
+            for (int o = 0; o < offsets.length; o++) offsets[o] += hdrSize;
 
             // Total size of instructions (for past-the-end labels)
             int totalInsnSize = 0;
