@@ -68,6 +68,7 @@ public final class ClassRewriter {
                 jos.write(data);
                 jos.closeEntry();
             }
+            bundleVMRuntime(jos, names, opts);
             // Inject junk classes to confuse decompilers
             injectJunkClasses(jos, names, opts.getSeed());
         }
@@ -101,7 +102,8 @@ public final class ClassRewriter {
         }
     }
 
-    /** Read VMInterpreter from classpath, obfuscate, rename, and add to jar. */
+    /** Bundle the VM runtime class (VMInterpreter) into the output jar.
+     *  This makes the protected JAR self-contained — no external dependencies. */
     private static void bundleVMRuntime(JarOutputStream jos, ObfuscatedNames names,
                                          CliOptions opts) throws Exception {
         String vmPath = "opaddon/vm/VMInterpreter.class";
@@ -112,8 +114,8 @@ public final class ClassRewriter {
         }
         byte[] vmBytes = is.readAllBytes();
         is.close();
-        vmBytes = opaddon.hardening.InterpreterObfuscator.obfuscate(vmBytes, opts.getSeed(), names);
-        JarEntry vmEntry = new JarEntry(names.vmInternal() + ".class");
+        vmBytes = opaddon.hardening.InterpreterObfuscator.obfuscate(vmBytes, opts.getSeed(), null);
+        JarEntry vmEntry = new JarEntry(vmPath); // keep original path for self-contained jar
         jos.putNextEntry(vmEntry);
         jos.write(vmBytes);
         jos.closeEntry();
