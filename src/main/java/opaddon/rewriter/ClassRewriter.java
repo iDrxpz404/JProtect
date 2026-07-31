@@ -68,10 +68,37 @@ public final class ClassRewriter {
                 jos.write(data);
                 jos.closeEntry();
             }
-            // Bundle the obfuscated VM runtime into the output jar
-            // bundle skipped - class stays in package
+            // Inject junk classes to confuse decompilers
+            injectJunkClasses(jos, names, opts.getSeed());
         }
         return out.toByteArray();
+    }
+
+    /** Inject random-looking empty classes into the output jar. */
+    private static void injectJunkClasses(JarOutputStream jos, ObfuscatedNames names,
+                                           long seed) throws Exception {
+        java.util.Random rng = new java.util.Random(seed ^ 0xDEADBEEFL);
+        int count = 3 + rng.nextInt(5);
+        for (int i = 0; i < count; i++) {
+            String junkName = opaddon.hardening.NameGenerator.className(
+                seed ^ (0x10000L + i * 7777L));
+            ClassWriter cw = new ClassWriter(0);
+            cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC,
+                junkName, null, "java/lang/Object", null);
+            // Add a junk method
+            MethodVisitor mv = cw.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC,
+                "m", "()I", null, null);
+            mv.visitCode();
+            mv.visitLdcInsn(rng.nextInt());
+            mv.visitInsn(Opcodes.IRETURN);
+            mv.visitMaxs(1, 1);
+            mv.visitEnd();
+            cw.visitEnd();
+            JarEntry je = new JarEntry(junkName + ".class");
+            jos.putNextEntry(je);
+            jos.write(cw.toByteArray());
+            jos.closeEntry();
+        }
     }
 
     /** Read VMInterpreter from classpath, obfuscate, rename, and add to jar. */
@@ -228,13 +255,14 @@ public final class ClassRewriter {
             for (ProtectedMethod pm : protectedMethods) {
                 virtualizedKeys.add(pm.method.name + pm.method.desc);
             }
-            // Detect if original class has a <clinit> before processing
             for (MethodNode m : original.methods) {
-                if (m.name.equals("<clinit>")) {
-                    hasClinit = true;
-                    break;
-                }
+                if (m.name.equals("<clinit>")) { hasClinit = true; break; }
             }
+        }
+
+        @Override
+        public void visitSource(String source, String debug) {
+            // Strip source file info from decompiled output
         }
 
         @Override

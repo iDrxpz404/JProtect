@@ -72,6 +72,11 @@ public final class InterpreterObfuscator {
         }
 
         @Override
+        public void visitSource(String source, String debug) {
+            // Strip source file info from decompiler output
+        }
+
+        @Override
         public FieldVisitor visitField(int access, String name, String desc,
                                         String sig, Object value) {
             return super.visitField(access, name, desc, sig, value);
@@ -104,10 +109,11 @@ public final class InterpreterObfuscator {
 
             // Inject opaque predicates into execute() (check original name)
             if (name.equals("execute") && desc.contains("[B[Ljava/lang/Object;")) {
-                return new OpaquePredicateInjector(mv, rng);
+                mv = new OpaquePredicateInjector(mv, rng);
             }
 
-            return mv;
+            // Strip debug info from all methods
+            return new DebugStripper(mv);
         }
 
         @Override
@@ -311,10 +317,19 @@ public final class InterpreterObfuscator {
         }
     }
 
+    // --- Debug info stripper (removes line numbers, local vars, source file) ---
+
+    private static final class DebugStripper extends MethodVisitor {
+        DebugStripper(MethodVisitor mv) { super(Opcodes.ASM9, mv); }
+        @Override public void visitLineNumber(int line, Label start) { /* strip */ }
+        @Override public void visitLocalVariable(String name, String d, String sig,
+                                                  Label s, Label e, int idx) { /* strip */ }
+        @Override public void visitParameter(String name, int access) { /* strip */ }
+    }
+
     // --- Public helpers for name generation (used by ClassRewriter) ---
 
     private static String junkMethodName(int index) {
-        // Static version for external use
         return "a" + Integer.toHexString(index * 0x9E3779B9);
     }
 }
